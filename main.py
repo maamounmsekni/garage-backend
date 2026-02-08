@@ -4,9 +4,10 @@ from typing import List, Optional
 from fastapi import FastAPI, Depends, HTTPException, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_
 
-from database import engine, get_db
-from models import Base, Proprietaire, TypeVoiture, Voiture, Reparation
+from database import get_db
+from models import Proprietaire, TypeVoiture, Voiture, Reparation
 from schemas import (
     VoitureAvecHistoriqueOut,
     EnregistrementSimpleCreate,
@@ -17,11 +18,11 @@ from schemas import (
 
 app = FastAPI(title="Garage API")
 
-
-@app.on_event("startup")
-def on_startup():
-    Base.metadata.create_all(bind=engine)
-
+# ✅ Supabase is the source of truth => DO NOT create tables at startup
+# (So this block is removed)
+# @app.on_event("startup")
+# def on_startup():
+#     Base.metadata.create_all(bind=engine)
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,11 +36,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-
 def utcnow():
     return datetime.now(timezone.utc)
-
 
 # ------------------------------------------------------------
 # 1) history by matricule (sorted newest -> oldest)
@@ -63,7 +61,7 @@ def details_voiture_par_matricule(
     hist = (
         db.query(Reparation)
         .filter(Reparation.id_voiture == v.id)
-        .order_by(Reparation.date_visite.desc(), Reparation.id.desc())  # ✅ tie-break
+        .order_by(Reparation.date_visite.desc(), Reparation.id.desc())
         .all()
     )
     return {"voiture": v, "historique": hist}
@@ -78,14 +76,12 @@ def creer_enregistrement(payload: EnregistrementSimpleCreate, db: Session = Depe
     if not numero:
         raise HTTPException(status_code=422, detail="numero_serie obligatoire")
 
-    # default type
     tv = db.query(TypeVoiture).filter(TypeVoiture.nom_type == "GENERIC").first()
     if not tv:
         tv = TypeVoiture(nom_type="GENERIC")
         db.add(tv)
         db.flush()
 
-    # get car if exists
     v = (
         db.query(Voiture)
         .options(joinedload(Voiture.proprietaire))
@@ -94,7 +90,6 @@ def creer_enregistrement(payload: EnregistrementSimpleCreate, db: Session = Depe
     )
 
     if not v:
-        # create owner
         p = Proprietaire(
             nom_complet=(payload.nom_proprietaire or "").strip(),
             numero_telephone=(payload.telephone or "").strip(),
@@ -102,7 +97,6 @@ def creer_enregistrement(payload: EnregistrementSimpleCreate, db: Session = Depe
         db.add(p)
         db.flush()
 
-        # create car
         v = Voiture(
             id_proprietaire=p.id,
             id_type_voiture=tv.id,
@@ -113,7 +107,6 @@ def creer_enregistrement(payload: EnregistrementSimpleCreate, db: Session = Depe
         db.flush()
         proprietaire = p
     else:
-        # update owner/car if needed
         proprietaire = v.proprietaire
         if payload.nom_proprietaire:
             proprietaire.nom_complet = payload.nom_proprietaire.strip()
@@ -122,7 +115,6 @@ def creer_enregistrement(payload: EnregistrementSimpleCreate, db: Session = Depe
         if payload.marque:
             v.remarques = payload.marque.strip()
 
-    # always create a new repair row
     r = Reparation(
         id_voiture=v.id,
         date_visite=payload.date_visite or utcnow(),
@@ -167,7 +159,7 @@ def lister_enregistrements_par_numero_serie(numero_serie: str, db: Session = Dep
     reps = (
         db.query(Reparation)
         .filter(Reparation.id_voiture == v.id)
-        .order_by(Reparation.date_visite.desc(), Reparation.id.desc())  # ✅ tie-break
+        .order_by(Reparation.date_visite.desc(), Reparation.id.desc())
         .all()
     )
 
@@ -189,29 +181,26 @@ def lister_enregistrements_par_numero_serie(numero_serie: str, db: Session = Dep
 # ------------------------------------------------------------
 # 4) list all enregistrements (sorted newest -> oldest)
 # ------------------------------------------------------------
-from sqlalchemy import or_
-
 @app.get("/enregistrements", response_model=List[EnregistrementSimpleOut])
 def lister_enregistrements(
     db: Session = Depends(get_db),
-    q: Optional[str] = Query(None),         # partial text
+    q: Optional[str] = Query(None),
     limit: int = Query(10, ge=1, le=1000),
 ):
     query = (
         db.query(Reparation, Voiture, Proprietaire)
         .join(Voiture, Reparation.id_voiture == Voiture.id)
         .join(Proprietaire, Voiture.id_proprietaire == Proprietaire.id)
-        .order_by(Reparation.date_visite.desc(), Reparation.id.desc())  # ✅ newest first
+        .order_by(Reparation.date_visite.desc(), Reparation.id.desc())
     )
 
     if q:
         q = q.strip()
         like = f"%{q}%"
-
         query = query.filter(
             or_(
                 Voiture.matricule.ilike(like),
-                Voiture.remarques.ilike(like),                 # marque
+                Voiture.remarques.ilike(like),
                 Proprietaire.nom_complet.ilike(like),
                 Proprietaire.numero_telephone.ilike(like),
                 Reparation.probleme_signale.ilike(like),
@@ -234,7 +223,6 @@ def lister_enregistrements(
         }
         for (r, v, p) in rows
     ]
-
 
 
 # ------------------------------------------------------------

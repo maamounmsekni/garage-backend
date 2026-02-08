@@ -1,8 +1,11 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, Text, DateTime, ForeignKey, Numeric, String
 from sqlalchemy.orm import relationship, declarative_base
 
 Base = declarative_base()
+
+def utcnow():
+    return datetime.now(timezone.utc)
 
 class Proprietaire(Base):
     __tablename__ = "proprietaires"
@@ -10,7 +13,7 @@ class Proprietaire(Base):
     id = Column(Integer, primary_key=True, index=True)
     nom_complet = Column(Text, nullable=False)
     numero_telephone = Column(Text, nullable=False)
-    cree_le = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    cree_le = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     voitures = relationship("Voiture", back_populates="proprietaire")
 
@@ -20,7 +23,7 @@ class TypeVoiture(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     nom_type = Column(Text, nullable=False)
-    cree_le = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    cree_le = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     voitures = relationship("Voiture", back_populates="type_voiture")
 
@@ -34,11 +37,17 @@ class Voiture(Base):
 
     matricule = Column(Text, nullable=False, unique=True)
     remarques = Column(Text, nullable=True)
-    cree_le = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    cree_le = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     proprietaire = relationship("Proprietaire", back_populates="voitures")
     type_voiture = relationship("TypeVoiture", back_populates="voitures")
-    reparations = relationship("Reparation", back_populates="voiture", cascade="all, delete-orphan")
+
+    # Keep this: it helps delete repairs when deleting a car even if DB FK CASCADE isn't set
+    reparations = relationship(
+        "Reparation",
+        back_populates="voiture",
+        cascade="all, delete-orphan",
+    )
 
 
 class Reparation(Base):
@@ -47,7 +56,7 @@ class Reparation(Base):
     id = Column(Integer, primary_key=True, index=True)
     id_voiture = Column(Integer, ForeignKey("voitures.id", ondelete="CASCADE"), nullable=False)
 
-    date_visite = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    date_visite = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     probleme_signale = Column(Text, nullable=False)
     diagnostic = Column(Text, nullable=True)
@@ -55,6 +64,6 @@ class Reparation(Base):
 
     prix = Column(Numeric(10, 2), nullable=True)
     statut = Column(String, nullable=False, default="EN_COURS")  # EN_COURS | TERMINEE | ANNULEE
-    cree_le = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    cree_le = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     voiture = relationship("Voiture", back_populates="reparations")
